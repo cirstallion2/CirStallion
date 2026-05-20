@@ -1,7 +1,7 @@
 """
 CirStallion — Polymarket BTC Arb Bot
 ─────────────────────────────────────
-Exploits the ~100 ms CLOB-repricing lag between Binance spot and
+Exploits the ~100 ms CLOB-repricing lag between Kraken spot and
 Polymarket BTC UP/DOWN 5-minute markets.
 
 Quick start
@@ -13,7 +13,7 @@ Quick start
 
 Architecture
 ────────────
-  BinanceFeed     ──► real-time spot price + 5M klines (WebSocket)
+  KrakenFeed      ──► real-time spot price + 5M OHLC (WebSocket, US-compliant)
   MiroFishEngine  ──► 100-node / 180-edge force-graph cluster detector
   PolymarketClient ─► live CLOB order-book poller + order submission
   SignalDetector  ──► detects lag > 0.3 %, applies graph + TV/CQ filters
@@ -32,7 +32,7 @@ from pathlib import Path
 
 import colorlog  # type: ignore
 
-from bot.binance_feed import BinanceFeed
+from bot.kraken_feed import KrakenFeed
 from bot.executor import Executor
 from bot.graph_engine import MiroFishEngine
 from bot.polymarket_client import PolymarketClient
@@ -107,7 +107,7 @@ async def run() -> None:
     _print_config_summary()
 
     # ── Initialise components ────────────────────────────────────────────
-    feed = BinanceFeed(CONFIG.binance)
+    feed = KrakenFeed(CONFIG.kraken)
     graph = MiroFishEngine(CONFIG.graph)
     poly = PolymarketClient(CONFIG.polymarket)
     risk = RiskManager(CONFIG.risk)
@@ -126,12 +126,12 @@ async def run() -> None:
         loop.add_signal_handler(sig, _shutdown)
 
     # ── Start background tasks ────────────────────────────────────────────
-    feed_task = asyncio.create_task(feed.start(), name="binance-feed")
+    feed_task = asyncio.create_task(feed.start(), name="kraken-feed")
     poly_task = asyncio.create_task(poly.start(dry_run=CONFIG.dry_run), name="poly-client")
     detector_task = asyncio.create_task(detector.start(), name="detector-init")
 
     # Wait until the feed has warmed up
-    logger.info("Waiting for Binance feed to warm up…")
+    logger.info("Waiting for Kraken feed to warm up…")
     for _ in range(100):
         if feed.is_ready():
             break

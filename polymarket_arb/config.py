@@ -6,10 +6,8 @@ load_dotenv()
 
 
 @dataclass
-class BinanceConfig:
-    ws_url: str = "wss://stream.binance.com:9443/ws"
-    rest_url: str = "https://api.binance.com"
-    symbol: str = "BTCUSDT"
+class KrakenConfig:
+    symbol: str = "XBTUSD"
     kline_interval: str = "5m"
     kline_limit: int = 200
     reconnect_delay_s: float = 1.0
@@ -35,9 +33,9 @@ class CryptoQuantConfig:
 
 @dataclass
 class TradingViewConfig:
-    exchange: str = "BINANCE"
+    exchange: str = "KRAKEN"
     screener: str = "crypto"
-    symbol: str = "BTCUSDT"
+    symbol: str = "BTCUSD"
     interval: str = "5m"
     refresh_interval_s: float = 60.0
 
@@ -67,7 +65,7 @@ class GraphConfig:
 
 @dataclass
 class BotConfig:
-    binance: BinanceConfig = field(default_factory=BinanceConfig)
+    kraken: KrakenConfig = field(default_factory=KrakenConfig)
     polymarket: PolymarketConfig = field(default_factory=PolymarketConfig)
     cryptoquant: CryptoQuantConfig = field(default_factory=CryptoQuantConfig)
     tradingview: TradingViewConfig = field(default_factory=TradingViewConfig)

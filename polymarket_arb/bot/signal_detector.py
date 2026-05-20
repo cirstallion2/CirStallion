@@ -31,7 +31,7 @@ from typing import Optional
 import aiohttp
 import numpy as np
 
-from .binance_feed import BinanceFeed
+from .kraken_feed import KrakenFeed
 from .graph_engine import MiroFishEngine, NodeSignals
 from .polymarket_client import ActiveMarket, PolymarketClient
 
@@ -63,7 +63,7 @@ _INACTIVE = Signal(
 
 class SignalDetector:
     """
-    Combines Binance spot data, MiroFish graph state, and Polymarket CLOB
+    Combines Kraken spot data, MiroFish graph state, and Polymarket CLOB
     prices to detect exploitable CLOB-lag opportunities.
 
     Optional signal layers
@@ -80,7 +80,7 @@ class SignalDetector:
 
     def __init__(
         self,
-        feed: BinanceFeed,
+        feed: KrakenFeed,
         graph: MiroFishEngine,
         poly: PolymarketClient,
         config,
