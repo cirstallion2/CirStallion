@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+arb_bot.log
+*.log
+.venv/
+venv/
