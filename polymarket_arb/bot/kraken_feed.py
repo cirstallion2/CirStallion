@@ -67,12 +67,15 @@ class KrakenFeed:
         await self._fetch_klines()
         logger.info("KrakenFeed: klines loaded (%d candles), connecting WebSocket…", len(self.klines))
 
+        delay = self._reconnect_delay
         while self._running:
             try:
                 await self._run_ws()
+                delay = self._reconnect_delay   # reset only after a clean session
             except Exception as exc:
-                logger.warning("KrakenFeed WS error: %s — reconnecting in %.1fs", exc, self._reconnect_delay)
-                await asyncio.sleep(self._reconnect_delay)
+                logger.warning("KrakenFeed WS error: %s — reconnecting in %.0fs", exc, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 30.0)    # exponential backoff, cap 30s
 
     def stop(self) -> None:
         self._running = False
