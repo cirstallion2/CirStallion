@@ -186,5 +186,41 @@ class RestCheckTests(unittest.TestCase):
             parse_depth({"error": ["EQuery:Unknown asset pair"], "result": {}})
 
 
+class PaperTraderTests(unittest.TestCase):
+    def _gap_tops(self):
+        # ETH-BTC bid lifted to 0.051: path A is +2% gross and net at zero fee.
+        return _tops(eth_btc=(0.051, 100.0, 0.051, 100.0))
+
+    def test_gap_that_persists_fills_at_capped_size(self):
+        from .paper_trader import PaperTrader
+        with tempfile.TemporaryDirectory() as d:
+            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3,
+                            log_path=os.path.join(d, "p.jsonl"))
+            p.on_eval(0.0, self._gap_tops())          # seen
+            p.on_eval(0.5, self._gap_tops())          # still there after latency -> fill
+            self.assertEqual(p.fills, 1)
+            self.assertAlmostEqual(p.equity, 11.0 + 11.0 * 0.02, places=9)
+
+    def test_gap_that_closes_is_missed(self):
+        from .paper_trader import PaperTrader
+        with tempfile.TemporaryDirectory() as d:
+            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3,
+                            log_path=os.path.join(d, "p.jsonl"))
+            p.on_eval(0.0, self._gap_tops())
+            p.on_eval(0.5, _tops())                   # gap closed before latency elapsed
+            self.assertEqual(p.fills, 0)
+            self.assertEqual(p.missed, 1)
+            self.assertEqual(p.equity, 11.0)
+
+    def test_halts_at_drawdown_limit(self):
+        from .paper_trader import PaperTrader
+        with tempfile.TemporaryDirectory() as d:
+            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.0,
+                            halt_fraction=0.5, log_path=os.path.join(d, "p.jsonl"))
+            p.equity = 5.0                            # below the 50% line
+            p.on_eval(0.0, self._gap_tops())
+            self.assertTrue(p.halted)
+
+
 if __name__ == "__main__":
     unittest.main()

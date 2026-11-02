@@ -33,6 +33,7 @@ from typing import Dict, Optional
 import websockets
 
 from .book import OrderBook, Top
+from .paper_trader import PaperTrader
 from .triangle import BTC_USD, ETH_BTC, ETH_USD, PRODUCTS, Opportunity, breakeven_gross_edge, evaluate
 
 logger = logging.getLogger(__name__)
@@ -91,12 +92,14 @@ class TriangleScanner:
         max_staleness_s: float = 2.0,
         eval_interval_s: float = 0.1,
         reconnect_delay_s: float = 1.0,
+        paper: Optional[PaperTrader] = None,
     ):
         self.taker_fee = taker_fee
         self.log_path = log_path
         self.max_staleness_s = max_staleness_s
         self.eval_interval_s = eval_interval_s
         self.reconnect_delay_s = reconnect_delay_s
+        self.paper = paper
 
         self.books: Dict[str, OrderBook] = {p: OrderBook(p) for p in PRODUCTS}
         self.stats = Stats()
@@ -126,6 +129,8 @@ class TriangleScanner:
         while self._running:
             await asyncio.sleep(every_s)
             logger.info("%s scanner: %s", self.venue, self.stats.summary())
+            if self.paper:
+                logger.info("%s paper: %s", self.venue, self.paper.summary())
 
     # ─── Subclass hooks ──────────────────────────────────────────────────────
 
@@ -160,6 +165,8 @@ class TriangleScanner:
 
         opps = evaluate(tops, self.taker_fee)
         self.stats.record(opps)
+        if self.paper:
+            self.paper.on_eval(now, tops)
         for o in opps:
             if o.gross_edge > 0:
                 self._log(o, tops)
@@ -293,11 +300,21 @@ async def _main(args: argparse.Namespace) -> None:
     taker_fee = args.taker_fee if args.taker_fee is not None else DEFAULT_TAKER_FEES[args.venue]
     log_path = args.log or f"{args.venue}_arb_opportunities.jsonl"
 
+    paper = None
+    if args.paper:
+        paper = PaperTrader(
+            starting_equity=args.paper_equity,
+            taker_fee=taker_fee,
+            latency_s=args.paper_latency,
+            log_path=f"{args.venue}_paper_trades.jsonl",
+        )
+
     scanner = cls(
         taker_fee=taker_fee,
         log_path=log_path,
         max_staleness_s=args.max_staleness,
         eval_interval_s=args.eval_interval,
+        paper=paper,
     )
     logger.info(
         "%s triangle scanner (DRY RUN): taker_fee=%.2f%%, breakeven gross edge=%.3f%%, log=%s",
@@ -311,6 +328,8 @@ async def _main(args: argparse.Namespace) -> None:
         for t in tasks:
             t.cancel()
         logger.info("Final: %s", scanner.stats.summary())
+        if scanner.paper:
+            logger.info("Final paper: %s", scanner.paper.summary())
 
 
 def main() -> None:
@@ -325,6 +344,11 @@ def main() -> None:
                         help="Skip evaluation if any book is older than this many seconds")
     parser.add_argument("--eval-interval", type=float, default=0.1,
                         help="Minimum seconds between evaluations")
+    parser.add_argument("--paper", action="store_true",
+                        help="Simulate fills with paper equity (no orders are placed)")
+    parser.add_argument("--paper-equity", type=float, default=11.0, help="Starting paper equity in USD")
+    parser.add_argument("--paper-latency", type=float, default=0.3,
+                        help="Seconds a gap must persist before a simulated fill")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
