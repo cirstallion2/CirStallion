@@ -313,6 +313,9 @@ async def _main(args: argparse.Namespace) -> None:
             taker_fee=taker_fee,
             latency_s=args.paper_latency,
             cooldown_s=args.paper_cooldown,
+            slippage_pct=args.paper_slippage,
+            fail_prob=args.paper_fail_prob,
+            unwind_loss_pct=args.paper_unwind_loss,
             log_path=f"{args.venue}_paper_trades.jsonl",
         )
 
@@ -359,6 +362,12 @@ def main() -> None:
                         help="Seconds a gap must persist before a simulated fill")
     parser.add_argument("--paper-cooldown", type=float, default=10.0,
                         help="Seconds before the same path can fill again")
+    parser.add_argument("--paper-slippage", type=float, default=0.0002,
+                        help="Per-leg slippage as a fraction (0.0002 = 0.02%%)")
+    parser.add_argument("--paper-fail-prob", type=float, default=0.05,
+                        help="Chance a simulated fill breaks a leg")
+    parser.add_argument("--paper-unwind-loss", type=float, default=0.003,
+                        help="Loss as a fraction of size when a fill breaks")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 

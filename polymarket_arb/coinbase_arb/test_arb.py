@@ -194,8 +194,8 @@ class PaperTraderTests(unittest.TestCase):
     def test_gap_that_persists_fills_at_capped_size(self):
         from .paper_trader import PaperTrader
         with tempfile.TemporaryDirectory() as d:
-            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3,
-                            log_path=os.path.join(d, "p.jsonl"))
+            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3, slippage_pct=0.0,
+                            fail_prob=0.0, log_path=os.path.join(d, "p.jsonl"))
             p.on_eval(0.0, self._gap_tops())          # seen
             p.on_eval(0.5, self._gap_tops())          # still there after latency -> fill
             self.assertEqual(p.fills, 1)
@@ -204,8 +204,8 @@ class PaperTraderTests(unittest.TestCase):
     def test_gap_that_closes_is_missed(self):
         from .paper_trader import PaperTrader
         with tempfile.TemporaryDirectory() as d:
-            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3,
-                            log_path=os.path.join(d, "p.jsonl"))
+            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3, slippage_pct=0.0,
+                            fail_prob=0.0, log_path=os.path.join(d, "p.jsonl"))
             p.on_eval(0.0, self._gap_tops())
             p.on_eval(0.5, _tops())                   # gap closed before latency elapsed
             self.assertEqual(p.fills, 0)
@@ -215,8 +215,8 @@ class PaperTraderTests(unittest.TestCase):
     def test_halts_at_drawdown_limit(self):
         from .paper_trader import PaperTrader
         with tempfile.TemporaryDirectory() as d:
-            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.0,
-                            halt_fraction=0.5, log_path=os.path.join(d, "p.jsonl"))
+            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.0, slippage_pct=0.0,
+                            fail_prob=0.0, halt_fraction=0.5, log_path=os.path.join(d, "p.jsonl"))
             p.equity = 5.0                            # below the 50% line
             p.on_eval(0.0, self._gap_tops())
             self.assertTrue(p.halted)
@@ -249,13 +249,57 @@ class CompareTests(unittest.TestCase):
         self.assertAlmostEqual(ad, 0.01)
 
 
+class PaperHarshModelTests(unittest.TestCase):
+    GAP = staticmethod(lambda: _tops(eth_btc=(0.051, 100.0, 0.051, 100.0)))   # +2% gross
+
+    def _trader(self, d, **kw):
+        from .paper_trader import PaperTrader
+        base = dict(starting_equity=11.0, taker_fee=0.0, latency_s=0.3, cooldown_s=0.0,
+                    log_path=os.path.join(d, "p.jsonl"))
+        base.update(kw)
+        return PaperTrader(**base)
+
+    def test_slippage_reduces_edge(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._trader(d, slippage_pct=0.001, fail_prob=0.0)
+            p.on_eval(0.0, self.GAP()); p.on_eval(0.5, self.GAP())
+            self.assertAlmostEqual(p.equity, 11.0 + 11.0 * (0.02 - 0.003), places=9)
+
+    def test_gap_smaller_than_slippage_is_not_traded(self):
+        small = _tops(eth_btc=(0.05 * 1.0005, 100.0, 0.05 * 1.0005, 100.0))   # +0.05% gross
+        with tempfile.TemporaryDirectory() as d:
+            p = self._trader(d, slippage_pct=0.0002, fail_prob=0.0)   # costs 0.06%
+            p.on_eval(0.0, small); p.on_eval(0.5, small)
+            self.assertEqual(p.fills, 0)
+            self.assertEqual(p.missed, 1)
+            self.assertEqual(p.equity, 11.0)
+
+    def test_failed_leg_loses_money(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = self._trader(d, slippage_pct=0.0, fail_prob=1.0, unwind_loss_pct=0.01)
+            p.on_eval(0.0, self.GAP()); p.on_eval(0.5, self.GAP())
+            self.assertEqual(p.failed, 1)
+            self.assertEqual(p.fills, 0)
+            self.assertAlmostEqual(p.equity, 11.0 - 0.11, places=9)
+
+    def test_consumed_depth_limits_repeat_size(self):
+        # Use a tiny-depth book: path A leg-2 depth 0.001 ETH -> capacity ~$2.50
+        thin = _tops(eth_btc=(0.051, 0.001, 0.051, 100.0))
+        with tempfile.TemporaryDirectory() as d:
+            p = self._trader(d, slippage_pct=0.0, fail_prob=0.0, depth_recovery_s=30.0)
+            p.on_eval(0.0, thin); p.on_eval(0.5, thin)        # trades the whole $2.50
+            p.on_eval(1.0, thin); p.on_eval(1.5, thin)        # nothing left within 30 s
+            self.assertEqual(p.fills, 1)
+            self.assertGreaterEqual(p.missed, 1)   # later attempts find no depth
+
+
 class PaperCooldownTests(unittest.TestCase):
     def test_cooldown_blocks_repeat_fill_on_same_gap(self):
         from .paper_trader import PaperTrader
         gap = _tops(eth_btc=(0.051, 100.0, 0.051, 100.0))   # path A is +2% gross and net at zero fee
         with tempfile.TemporaryDirectory() as d:
             p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3, cooldown_s=10.0,
-                            log_path=os.path.join(d, "p.jsonl"))
+                            slippage_pct=0.0, fail_prob=0.0, log_path=os.path.join(d, "p.jsonl"))
             p.on_eval(0.0, gap)          # seen
             p.on_eval(0.5, gap)          # fill
             p.on_eval(1.0, gap)          # re-registration blocked by cooldown

@@ -17,14 +17,17 @@ from datetime import datetime
 
 def build_report(rows: list[dict], starting_equity: float) -> str:
     fills = [r for r in rows if r.get("event") == "fill"]
+    fails = [r for r in rows if r.get("event") == "fail"]
     halts = [r for r in rows if r.get("event") == "halt"]
-    equity = fills[-1]["equity"] if fills else starting_equity
+    trades = sorted(fills + fails, key=lambda r: r["ts"])     # both move equity
+    equity = trades[-1]["equity"] if trades else starting_equity
     pnl = equity - starting_equity
     pct = pnl / starting_equity * 100
-    traded = sum(f["size_usd"] for f in fills)
+    traded = sum(t["size_usd"] for t in trades)
 
     lines = [
         f"fills:             {len(fills)}",
+        f"failed (unwound):  {len(fails)}",
         f"total traded:      ${traded:,.2f}",
         f"starting equity:   ${starting_equity:,.4f}",
         f"ending equity:     ${equity:,.4f}",
