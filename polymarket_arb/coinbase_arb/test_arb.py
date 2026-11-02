@@ -1,0 +1,133 @@
+"""
+Offline checks for the Coinbase triangle scanner. No network needed.
+
+    python -m unittest coinbase_arb.test_arb -v
+"""
+
+import json
+import os
+import tempfile
+import time
+import unittest
+
+from .book import OrderBook
+from .scanner import CoinbaseScanner
+from .triangle import BTC_USD, ETH_BTC, ETH_USD, evaluate, breakeven_gross_edge
+
+
+def _tops(btc=(50000.0, 1.0, 50000.0, 1.0), eth_usd=(2500.0, 10.0, 2500.0, 10.0),
+          eth_btc=(0.05, 100.0, 0.05, 100.0)):
+    return {BTC_USD: btc, ETH_USD: eth_usd, ETH_BTC: eth_btc}
+
+
+class OrderBookTests(unittest.TestCase):
+    def test_snapshot_then_updates(self):
+        b = OrderBook("BTC-USD")
+        b.apply_update({"changes": [["buy", "1", "1"]]}, 0.0)   # ignored before snapshot
+        self.assertFalse(b.ready)
+
+        b.apply_snapshot({"bids": [["100", "1"], ["99", "2"]], "asks": [["101", "1"]]}, 1.0)
+        self.assertEqual(b.top(), (100.0, 1.0, 101.0, 1.0))
+
+        b.apply_update({"changes": [["buy", "100", "0"], ["sell", "100.5", "3"]]}, 2.0)
+        self.assertEqual(b.top(), (99.0, 2.0, 100.5, 3.0))
+        self.assertEqual(b.last_update, 2.0)
+
+    def test_reset_requires_new_snapshot(self):
+        b = OrderBook("ETH-BTC")
+        b.apply_snapshot({"bids": [["1", "1"]], "asks": [["2", "1"]]}, 0.0)
+        b.reset()
+        self.assertIsNone(b.top())
+        b.apply_update({"changes": [["buy", "1", "5"]]}, 1.0)
+        self.assertIsNone(b.top())
+
+
+class TriangleTests(unittest.TestCase):
+    def test_consistent_prices_have_no_edge(self):
+        opps = evaluate(_tops())
+        self.assertEqual(len(opps), 2)
+        for o in opps:
+            self.assertAlmostEqual(o.gross_edge, 0.0, places=12)
+            self.assertLess(o.net_edge, 0)
+
+    def test_path_a_mispricing_is_detected(self):
+        # ETH-BTC bid lifted to 0.051 BTC/ETH: sell ETH into BTC, buy back via USD.
+        opps = evaluate(_tops(eth_btc=(0.051, 100.0, 0.051, 100.0)))
+        a = opps[0]
+        self.assertEqual(a.path, "USD>ETH>BTC>USD")
+        self.assertAlmostEqual(a.gross_edge, 0.02, places=9)
+        self.assertAlmostEqual(a.net_edge, 1.02 * (1 - 0.006) ** 3 - 1, places=9)
+        self.assertGreater(a.gross_edge, 0)
+        self.assertEqual(opps[1].path, "USD>BTC>ETH>USD")
+        self.assertLess(opps[1].gross_edge, 0)
+
+    def test_path_b_mispricing_is_detected(self):
+        # ETH-USD bid lifted to 2600: buy BTC, buy ETH with BTC, sell ETH for USD.
+        opps = evaluate(_tops(eth_usd=(2600.0, 10.0, 2600.0, 10.0)))
+        b = opps[1]
+        self.assertAlmostEqual(b.gross_edge, 2600 / 2500 - 1, places=9)
+        self.assertGreater(b.gross_edge, 0)
+
+    def test_fees_kill_small_gaps(self):
+        # 0.5% gross is below the ~1.8% break-even at a 0.60% taker fee.
+        opps = evaluate(_tops(eth_btc=(0.05 * 1.005, 100.0, 0.05 * 1.005, 100.0)))
+        self.assertGreater(opps[0].gross_edge, 0)
+        self.assertLess(opps[0].net_edge, 0)
+        self.assertLess(opps[0].gross_edge, breakeven_gross_edge(0.006))
+
+    def test_breakeven_matches_fee_math(self):
+        self.assertAlmostEqual(breakeven_gross_edge(0.006), 1 / 0.994 ** 3 - 1, places=12)
+        self.assertAlmostEqual(breakeven_gross_edge(0.0), 0.0, places=12)
+
+    def test_capacity_limited_by_thinnest_leg(self):
+        # Path A leg 2 has only 0.5 ETH on the bid of ETH-BTC -> caps notional at 0.5 * 2500 = $1,250.
+        opps = evaluate(_tops(eth_btc=(0.051, 0.5, 0.051, 100.0)))
+        self.assertAlmostEqual(opps[0].capacity_usd, 0.5 * 2500.0, places=6)
+
+    def test_missing_book_returns_nothing(self):
+        tops = _tops()
+        tops[ETH_BTC] = None
+        self.assertEqual(evaluate(tops), [])
+
+
+class ScannerTests(unittest.TestCase):
+    def _feed(self, scanner, msg):
+        scanner._handle(json.dumps(msg))
+
+    def test_end_to_end_logs_positive_gross_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "opps.jsonl")
+            s = CoinbaseScanner(taker_fee=0.006, log_path=log, eval_interval_s=0.0)
+
+            self._feed(s, {"type": "snapshot", "product_id": BTC_USD,
+                           "bids": [["50000", "1"]], "asks": [["50000", "1"]]})
+            self._feed(s, {"type": "snapshot", "product_id": ETH_USD,
+                           "bids": [["2500", "10"]], "asks": [["2500", "10"]]})
+            # Mispriced ETH-BTC bid -> Path A has positive gross edge.
+            self._feed(s, {"type": "snapshot", "product_id": ETH_BTC,
+                           "bids": [["0.051", "100"]], "asks": [["0.0515", "100"]]})
+            # Trigger an evaluation via an update.
+            self._feed(s, {"type": "l2update", "product_id": ETH_BTC,
+                           "changes": [["buy", "0.051", "100"]], "time": "t"})
+
+            with open(log, encoding="utf-8") as fh:
+                rows = [json.loads(line) for line in fh]
+            self.assertGreaterEqual(len(rows), 1)
+            self.assertEqual(rows[0]["path"], "USD>ETH>BTC>USD")
+            self.assertGreater(rows[0]["gross_pct"], 0)
+            self.assertGreater(s.stats.evaluations, 0)
+
+    def test_stale_book_blocks_evaluation(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = CoinbaseScanner(log_path=os.path.join(d, "x.jsonl"), eval_interval_s=0.0,
+                                max_staleness_s=1.0)
+            for pid in (BTC_USD, ETH_USD, ETH_BTC):
+                s.books[pid].apply_snapshot({"bids": [["1", "1"]], "asks": [["2", "1"]]},
+                                            time.monotonic() - 10.0)
+            s._maybe_evaluate(time.monotonic())
+            self.assertEqual(s.stats.evaluations, 0)
+            self.assertGreater(s.stats.stale_skips, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

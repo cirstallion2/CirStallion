@@ -6,3 +6,4 @@ arb_bot.log
 *.log
 .venv/
 venv/
+*.jsonl
