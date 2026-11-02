@@ -11,7 +11,7 @@ import time
 import unittest
 
 from .book import OrderBook
-from .scanner import CoinbaseScanner
+from .scanner import CoinbaseScanner, KrakenScanner
 from .triangle import BTC_USD, ETH_BTC, ETH_USD, evaluate, breakeven_gross_edge
 
 
@@ -119,7 +119,7 @@ class ScannerTests(unittest.TestCase):
 
     def test_stale_book_blocks_evaluation(self):
         with tempfile.TemporaryDirectory() as d:
-            s = CoinbaseScanner(log_path=os.path.join(d, "x.jsonl"), eval_interval_s=0.0,
+            s = CoinbaseScanner(taker_fee=0.006, log_path=os.path.join(d, "x.jsonl"), eval_interval_s=0.0,
                                 max_staleness_s=1.0)
             for pid in (BTC_USD, ETH_USD, ETH_BTC):
                 s.books[pid].apply_snapshot({"bids": [["1", "1"]], "asks": [["2", "1"]]},
@@ -127,6 +127,50 @@ class ScannerTests(unittest.TestCase):
             s._maybe_evaluate(time.monotonic())
             self.assertEqual(s.stats.evaluations, 0)
             self.assertGreater(s.stats.stale_skips, 0)
+
+
+class KrakenScannerTests(unittest.TestCase):
+    def _feed(self, scanner, msg):
+        scanner._handle(json.dumps(msg))
+
+    def _snapshot(self, scanner, pair, bid, ask, size="10"):
+        self._feed(scanner, [0, {"as": [[ask, size, "1"]], "bs": [[bid, size, "1"]]},
+                             "book-10", pair])
+
+    def test_snapshot_then_update_triggers_path_a(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "k.jsonl")
+            s = KrakenScanner(taker_fee=0.004, log_path=log, eval_interval_s=0.0)
+            self._snapshot(s, "XBT/USD", "50000.0", "50000.0", "1")
+            self._snapshot(s, "ETH/USD", "2500.0", "2500.0", "10")
+            self._snapshot(s, "ETH/XBT", "0.0510", "0.0515", "100")
+            # Update the ETH/XBT bid to the same level with new size -> evaluation fires.
+            self._feed(s, [0, {"b": [["0.0510", "100.00000000", "2"]]}, "book-10", "ETH/XBT"])
+
+            with open(log, encoding="utf-8") as fh:
+                rows = [json.loads(line) for line in fh]
+            self.assertTrue(rows)
+            self.assertEqual(rows[0]["venue"], "kraken")
+            self.assertEqual(rows[0]["path"], "USD>ETH>BTC>USD")
+            self.assertAlmostEqual(rows[0]["gross_pct"], 2.0, places=3)
+
+    def test_zero_volume_removes_level(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = KrakenScanner(taker_fee=0.004, log_path=os.path.join(d, "k.jsonl"), eval_interval_s=0.0)
+            self._snapshot(s, "ETH/XBT", "0.0510", "0.0515", "100")
+            s._handle(json.dumps([0, {"b": [["0.0510", "0.00000000", "3"]]}, "book-10", "ETH/XBT"]))
+            top = s.books["ETH-BTC"].top()
+            self.assertIsNone(top)   # the only bid was removed
+
+    def test_non_book_and_unknown_messages_are_ignored(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = KrakenScanner(taker_fee=0.004, log_path=os.path.join(d, "k.jsonl"))
+            s._handle(json.dumps({"event": "heartbeat"}))
+            s._handle(json.dumps({"event": "systemStatus", "status": "online"}))
+            s._handle(json.dumps([0, {"a": [["1", "1", "1"]]}, "trade", "XBT/USD"]))
+            s._handle(json.dumps([0, {"as": [["1", "1", "1"]], "bs": []}, "book-10", "DOGE/USD"]))
+            s._handle("not json")
+            self.assertFalse(any(b.ready for b in s.books.values()))
 
 
 if __name__ == "__main__":
