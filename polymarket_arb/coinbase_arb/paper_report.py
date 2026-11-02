@@ -30,17 +30,23 @@ def build_report(rows: list[dict], starting_equity: float) -> str:
         f"ending equity:     ${equity:,.4f}",
         f"net P&L:           ${pnl:+,.4f} ({pct:+.4f}%)",
     ]
+    implausible = False
     if fills:
         first, last = fills[0]["ts"], fills[-1]["ts"]
-        hours = max((last - first) / 3600, 1e-9)
+        span_s = last - first
+        hours = span_s / 3600
         lines.append(f"span:              {datetime.fromtimestamp(first):%Y-%m-%d %H:%M} to "
                      f"{datetime.fromtimestamp(last):%H:%M} ({hours:.2f} h)")
-        lines.append(f"fills per hour:    {len(fills) / hours:,.1f}")
+        if span_s >= 60:
+            rate = len(fills) / hours
+            lines.append(f"fills per hour:    {rate:,.1f}")
+            implausible = rate > 120
+        else:
+            lines.append("fills per hour:    n/a (run under 60 s)")
         lines.append(f"avg P&L per fill:  ${pnl / len(fills):+,.6f}")
     if halts:
         lines.append("HALTED: drawdown limit reached during the run")
 
-    implausible = bool(fills) and len(fills) / max((fills[-1]["ts"] - fills[0]["ts"]) / 3600, 1e-9) > 120
     if implausible:
         lines.append("WARNING: fill rate above 120/hour. Likely repeated fills on one gap. "
                      "Treat the P&L as invalid.")

@@ -222,6 +222,21 @@ class PaperTraderTests(unittest.TestCase):
             self.assertTrue(p.halted)
 
 
+class PaperCooldownTests(unittest.TestCase):
+    def test_cooldown_blocks_repeat_fill_on_same_gap(self):
+        from .paper_trader import PaperTrader
+        gap = _tops(eth_btc=(0.051, 100.0, 0.051, 100.0))   # path A is +2% gross and net at zero fee
+        with tempfile.TemporaryDirectory() as d:
+            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3, cooldown_s=10.0,
+                            log_path=os.path.join(d, "p.jsonl"))
+            p.on_eval(0.0, gap)          # seen
+            p.on_eval(0.5, gap)          # fill
+            p.on_eval(1.0, gap)          # re-registration blocked by cooldown
+            p.on_eval(2.0, gap)
+            p.on_eval(2.5, gap)
+            self.assertEqual(p.fills, 1)
+
+
 class PaperReportTests(unittest.TestCase):
     def test_profitable_verdict(self):
         from .paper_report import build_report
@@ -236,23 +251,12 @@ class PaperReportTests(unittest.TestCase):
 
     def test_implausible_fill_rate_is_invalid(self):
         from .paper_report import build_report
-        rows = [{"event": "fill", "ts": 1000.0, "size_usd": 11.0, "equity": 11.5},
-                {"event": "fill", "ts": 1010.0, "size_usd": 11.0, "equity": 12.0}]
+        # 3 fills over 60 s = 180 fills/hour, above the 120/hour limit
+        rows = [{"event": "fill", "ts": 1000.0 + t, "size_usd": 11.0, "equity": 11.5}
+                for t in (0.0, 30.0, 60.0)]
         out = build_report(rows, 11.0)
         self.assertIn("INVALID", out)
         self.assertIn("WARNING", out)
-
-    def test_cooldown_blocks_repeat_fill_on_same_gap(self):
-        from .paper_trader import PaperTrader
-        with tempfile.TemporaryDirectory() as d:
-            p = PaperTrader(starting_equity=11.0, taker_fee=0.0, latency_s=0.3, cooldown_s=10.0,
-                            log_path=os.path.join(d, "p.jsonl"))
-            p.on_eval(0.0, self._gap_tops())
-            p.on_eval(0.5, self._gap_tops())          # fill
-            p.on_eval(1.0, self._gap_tops())          # re-registration blocked by cooldown
-            p.on_eval(2.0, self._gap_tops())
-            p.on_eval(2.5, self._gap_tops())
-            self.assertEqual(p.fills, 1)
 
     def test_halt_is_reported(self):
         from .paper_report import build_report
