@@ -32,6 +32,7 @@ class PaperTrader:
     taker_fee: float = 0.0
     latency_s: float = 0.3
     halt_fraction: float = 0.5
+    cooldown_s: float = 10.0       # no new fill on a path for this long after one fills
     log_path: str = "paper_trades.jsonl"
 
     equity: float = field(init=False)
@@ -39,6 +40,7 @@ class PaperTrader:
     missed: int = field(init=False, default=0)
     halted: bool = field(init=False, default=False)
     _pending: Dict[str, float] = field(init=False, default_factory=dict)   # path -> due time
+    _cooldown_until: Dict[str, float] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self.equity = self.starting_equity
@@ -58,6 +60,7 @@ class PaperTrader:
                 pnl = size * opp.net_edge
                 self.equity += pnl
                 self.fills += 1
+                self._cooldown_until[path] = now + self.cooldown_s
                 self._log({"ts": time.time(), "event": "fill", "path": path,
                            "size_usd": round(size, 4), "net_pct": round(opp.net_edge * 100, 5),
                            "pnl_usd": round(pnl, 6), "equity": round(self.equity, 6)})
@@ -66,6 +69,8 @@ class PaperTrader:
 
         # Register new gaps.
         for o in evaluate(tops, self.taker_fee):
+            if now < self._cooldown_until.get(o.path, 0.0):
+                continue                          # same gap, already filled recently
             if o.net_edge > 0 and o.path not in self._pending:
                 self._pending[o.path] = now + self.latency_s
 

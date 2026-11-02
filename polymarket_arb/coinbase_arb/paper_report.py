@@ -40,7 +40,14 @@ def build_report(rows: list[dict], starting_equity: float) -> str:
     if halts:
         lines.append("HALTED: drawdown limit reached during the run")
 
-    if pnl > 0:
+    implausible = bool(fills) and len(fills) / max((fills[-1]["ts"] - fills[0]["ts"]) / 3600, 1e-9) > 120
+    if implausible:
+        lines.append("WARNING: fill rate above 120/hour. Likely repeated fills on one gap. "
+                     "Treat the P&L as invalid.")
+
+    if implausible:
+        verdict = "INVALID: fill rate too high to trust"
+    elif pnl > 0:
         verdict = "PROFITABLE in simulation"
     elif pnl == 0:
         verdict = "BREAKEVEN (no fills)"

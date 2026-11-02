@@ -308,6 +308,7 @@ async def _main(args: argparse.Namespace) -> None:
             starting_equity=args.paper_equity,
             taker_fee=taker_fee,
             latency_s=args.paper_latency,
+            cooldown_s=args.paper_cooldown,
             log_path=f"{args.venue}_paper_trades.jsonl",
         )
 
@@ -352,6 +353,8 @@ def main() -> None:
     parser.add_argument("--paper-equity", type=float, default=11.0, help="Starting paper equity in USD")
     parser.add_argument("--paper-latency", type=float, default=0.3,
                         help="Seconds a gap must persist before a simulated fill")
+    parser.add_argument("--paper-cooldown", type=float, default=10.0,
+                        help="Seconds before the same path can fill again")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
