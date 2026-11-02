@@ -173,5 +173,18 @@ class KrakenScannerTests(unittest.TestCase):
             self.assertFalse(any(b.ready for b in s.books.values()))
 
 
+class RestCheckTests(unittest.TestCase):
+    def test_parse_depth_top_of_book(self):
+        from .rest_check import parse_depth
+        payload = {"error": [], "result": {"XXBTZUSD": {
+            "asks": [["50001.0", "0.5", "1"]], "bids": [["50000.0", "1.2", "1"]]}}}
+        self.assertEqual(parse_depth(payload), (50000.0, 1.2, 50001.0, 0.5))
+
+    def test_parse_depth_raises_on_api_error(self):
+        from .rest_check import parse_depth
+        with self.assertRaises(ValueError):
+            parse_depth({"error": ["EQuery:Unknown asset pair"], "result": {}})
+
+
 if __name__ == "__main__":
     unittest.main()
