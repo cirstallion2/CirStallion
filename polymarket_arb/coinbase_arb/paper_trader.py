@@ -73,6 +73,17 @@ class PaperTrader:
             self.halted = True
             self._log({"ts": time.time(), "event": "halt", "equity": round(self.equity, 6)})
 
+    HEADER = (f"{'TIME':<9} {'BALANCE $':>12} {'P&L $':>12} {'P&L %':>10} "
+              f"{'FILLS':>7} {'MISSED':>8}  STATUS")
+
+    def row(self, clock: str) -> str:
+        """One fixed-width table row matching HEADER."""
+        pnl = self.equity - self.starting_equity
+        pct = pnl / self.starting_equity * 100
+        status = "HALTED" if self.halted else "RUNNING"
+        return (f"{clock:<9} {self.equity:>12,.4f} {pnl:>+12,.4f} {pct:>+9.4f}% "
+                f"{self.fills:>7} {self.missed:>8}  {status}")
+
     def summary(self) -> str:
         ret = (self.equity / self.starting_equity - 1.0) * 100
         return (f"paper equity=${self.equity:,.4f} (start ${self.starting_equity:,.2f}, {ret:+.4f}%) "

@@ -126,11 +126,13 @@ class TriangleScanner:
         self._running = False
 
     async def report_stats(self, every_s: float = 30.0) -> None:
+        if self.paper:
+            print(PaperTrader.HEADER)
         while self._running:
             await asyncio.sleep(every_s)
             logger.info("%s scanner: %s", self.venue, self.stats.summary())
             if self.paper:
-                logger.info("%s paper: %s", self.venue, self.paper.summary())
+                print(self.paper.row(time.strftime("%H:%M:%S")))
 
     # ─── Subclass hooks ──────────────────────────────────────────────────────
 
@@ -329,6 +331,7 @@ async def _main(args: argparse.Namespace) -> None:
             t.cancel()
         logger.info("Final: %s", scanner.stats.summary())
         if scanner.paper:
+            print(scanner.paper.row(time.strftime("%H:%M:%S")))
             logger.info("Final paper: %s", scanner.paper.summary())
 
 
