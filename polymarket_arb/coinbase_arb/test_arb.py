@@ -222,5 +222,26 @@ class PaperTraderTests(unittest.TestCase):
             self.assertTrue(p.halted)
 
 
+class PaperReportTests(unittest.TestCase):
+    def test_profitable_verdict(self):
+        from .paper_report import build_report
+        rows = [{"event": "fill", "ts": 1000.0, "size_usd": 11.0, "equity": 11.5}]
+        out = build_report(rows, 11.0)
+        self.assertIn("VERDICT: PROFITABLE in simulation", out)
+        self.assertIn("net P&L:           $+0.5000", out)
+
+    def test_no_fills_is_breakeven(self):
+        from .paper_report import build_report
+        self.assertIn("VERDICT: BREAKEVEN", build_report([], 11.0))
+
+    def test_halt_is_reported(self):
+        from .paper_report import build_report
+        rows = [{"event": "fill", "ts": 1000.0, "size_usd": 11.0, "equity": 4.0},
+                {"event": "halt", "ts": 1001.0, "equity": 4.0}]
+        out = build_report(rows, 11.0)
+        self.assertIn("NOT PROFITABLE", out)
+        self.assertIn("HALTED", out)
+
+
 if __name__ == "__main__":
     unittest.main()
