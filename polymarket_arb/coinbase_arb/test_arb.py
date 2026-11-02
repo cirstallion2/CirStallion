@@ -222,6 +222,33 @@ class PaperTraderTests(unittest.TestCase):
             self.assertTrue(p.halted)
 
 
+class BookDepthTests(unittest.TestCase):
+    def test_levels_outside_window_are_dropped(self):
+        b = OrderBook("ETH-BTC", max_depth=2)
+        b.apply_snapshot({"bids": [["10", "1"], ["9", "1"]], "asks": [["11", "1"], ["12", "1"]]}, 0.0)
+        # A better bid and a better ask arrive: the worst level on each side falls out of the window.
+        b.apply_update({"changes": [["buy", "10.5", "1"], ["sell", "10.9", "1"]]}, 1.0)
+        self.assertEqual(sorted(b.bids), [10.0, 10.5])
+        self.assertEqual(sorted(b.asks), [10.9, 11.0])
+
+    def test_no_pruning_without_max_depth(self):
+        b = OrderBook("BTC-USD")
+        b.apply_snapshot({"bids": [["1", "1"], ["2", "1"], ["3", "1"]], "asks": [["4", "1"]]}, 0.0)
+        self.assertEqual(len(b.bids), 3)
+
+    def test_kraken_scanner_prunes_to_subscribed_depth(self):
+        self.assertEqual(KrakenScanner(taker_fee=0.0, log_path=os.devnull).books["BTC-USD"].max_depth, 10)
+        self.assertIsNone(CoinbaseScanner(taker_fee=0.0, log_path=os.devnull).books["BTC-USD"].max_depth)
+
+
+class CompareTests(unittest.TestCase):
+    def test_compare_tops_relative_difference(self):
+        from .ws_compare import compare_tops
+        bd, ad = compare_tops((100.0, 1, 101.0, 1), (100.0, 1, 100.0, 1))
+        self.assertAlmostEqual(bd, 0.0)
+        self.assertAlmostEqual(ad, 0.01)
+
+
 class PaperCooldownTests(unittest.TestCase):
     def test_cooldown_blocks_repeat_fill_on_same_gap(self):
         from .paper_trader import PaperTrader

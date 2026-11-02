@@ -84,6 +84,7 @@ class TriangleScanner:
     """
 
     venue = "generic"
+    book_depth: Optional[int] = None   # set by venues whose feed uses a fixed depth window
 
     def __init__(
         self,
@@ -101,7 +102,9 @@ class TriangleScanner:
         self.reconnect_delay_s = reconnect_delay_s
         self.paper = paper
 
-        self.books: Dict[str, OrderBook] = {p: OrderBook(p) for p in PRODUCTS}
+        self.books: Dict[str, OrderBook] = {
+            p: OrderBook(p, max_depth=self.book_depth) for p in PRODUCTS
+        }
         self.stats = Stats()
         self._last_eval = 0.0
         self._running = False
@@ -249,6 +252,7 @@ class KrakenScanner(TriangleScanner):
     WS_URL = "wss://ws.kraken.com"
     PAIR_TO_INTERNAL = {"XBT/USD": BTC_USD, "ETH/USD": ETH_USD, "ETH/XBT": ETH_BTC}
     BOOK_DEPTH = 10
+    book_depth = BOOK_DEPTH            # drop levels that fall out of the subscribed window
 
     async def _run_ws(self) -> None:
         sub = json.dumps({
